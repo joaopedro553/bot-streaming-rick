@@ -9,11 +9,11 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from pymongo import MongoClient
 
-# --- LOGS ---
+# --- CONFIGURAÇÕES DE LOGS ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- DADOS DIRETOS (SEM ERRO DE LEITURA) ---
+# --- DADOS DIRETOS ---
 TOKEN = "8479454342:AAFEX0k2XcKcLZB-q_77kIRH-CoPpmKlDVI"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
 
@@ -25,14 +25,13 @@ SERVICOS = ['netflix', 'disney', 'max', 'prime', 'crunchyroll', 'apple', 'globop
 # Conectar MongoDB
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=20000)
 db = client['streaming_db']
-cooldowns = {}
 
 def escape_md(text):
     for char in [r'.', r'-', r'!', r'(', r')', r'{', r'}', r'[', r']', r'#', r'+']:
         text = str(text).replace(char, f"\\{char}")
     return text
 
-# --- COMANDOS ---
+# --- COMANDOS DO BOT ---
 async def bot_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_GROUP_ID: return
     est = "".join([f"▪️ /{s.capitalize()}: {db[s].count_documents({})}\n" for s in SERVICOS])
@@ -64,30 +63,42 @@ async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await query.message.delete()
         except: pass
 
-# --- SERVER FLASK ---
-server = Flask(__name__)
-@server.route('/')
-def h(): return "Bot Ativo", 200
+# --- SERVER FLASK (Para a Render não desligar) ---
+app = Flask(__name__)
+@app.route('/')
+def health(): return "Bot Ativo", 200
 
 def run_flask():
-    server.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
 # --- FUNÇÃO PRINCIPAL ---
-def main():
-    # Inicia o Flask em segundo plano
+async def start_bot():
+    # Inicia o Flask em uma linha separada
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # Inicia o Bot
+    # Constrói a aplicação do bot
     application = ApplicationBuilder().token(TOKEN).build()
     
+    # Adiciona os handlers
     application.add_handler(CommandHandler('bot', bot_intro))
     application.add_handler(CallbackQueryHandler(query_handler))
     for s in SERVICOS:
         application.add_handler(CommandHandler(s.capitalize(), gerar_servico))
         application.add_handler(CommandHandler(s.lower(), gerar_servico))
 
-    logger.info("🚀 BOT INICIADO COM SUCESSO!")
-    application.run_polling(drop_pending_updates=True)
+    # Inicia o bot de forma correta
+    async with application:
+        await application.initialize()
+        await application.start()
+        logger.info("🚀 BOT INICIADO COM SUCESSO!")
+        await application.updater.start_polling(drop_pending_updates=True)
+        # Mantém o bot rodando
+        while True:
+            await asyncio.sleep(3600)
 
 if __name__ == '__main__':
-    main()
+    try:
+        asyncio.run(start_bot())
+    except (KeyboardInterrupt, SystemExit):
+        pass
