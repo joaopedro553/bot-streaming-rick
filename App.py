@@ -13,12 +13,14 @@ from pymongo import MongoClient
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- DADOS FIXOS ---
-TOKEN = "8479454342:AAFEX0k2XcKcLZB-q_77kIRH-CoPpmKlDVI"
+# --- DADOS DIRETOS (ATUALIZADOS COM O NOVO TOKEN) ---
+TOKEN = "8479454342:AAH8qyPoDFyTEfzaUQGP3wsEjnbB3Z_aI2s"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
+
 ALLOWED_GROUP_ID = -1003429027149 
 OWNER_ID = 1031830691 
 VENDAS_URL = "https://t.me/RickSpaces"
+LINK_GRUPO = "https://t.me/+B57LHwEBCAhiYzc5"
 SERVICOS = ['netflix', 'disney', 'max', 'prime', 'crunchyroll', 'apple', 'globoplay', 'clarotv']
 
 # Conectar MongoDB
@@ -80,13 +82,24 @@ async def gerar_servico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
         return
 
+    # Sorteio Aleatório (Estoque Infinito)
     res = list(db[servico].aggregate([{"$sample": {"size": 1}}]))
     if res:
         cooldowns[uid] = datetime.now() + timedelta(seconds=60)
         dados = res[0].get('dados', 'erro:erro')
         email, senha = dados.split(':', 1) if ":" in dados else (dados, "---")
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{uid}"), InlineKeyboardButton("🛒 COMPRAR", url=VENDAS_URL)]])
-        txt = f"✅ *{servico.upper()}*\n\n✉️ E-mail: `{escape_md(email)}`\n🔑 Senha: `{escape_md(senha)}`"
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑️ APAGAR CONTA", callback_data=f"del_{uid}")],
+            [InlineKeyboardButton("🛒 COMPRE SEUS STREAMING", url=VENDAS_URL)]
+        ])
+        
+        txt = (
+            f"✅ *{servico.upper()} GERADA*\n\n"
+            f"✉️ E-mail: `{escape_md(email)}`\n"
+            f"🔑 Senha: `{escape_md(senha)}`"
+        )
+        
         msg = await update.message.reply_text(txt, parse_mode='MarkdownV2', reply_markup=kb)
         try: await update.message.delete()
         except: pass
@@ -108,12 +121,21 @@ app = Flask(__name__)
 def health(): return "Bot Ativo", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
-# --- FUNÇÃO PRINCIPAL ---
+# --- FUNÇÃO PRINCIPAL (ASYNC) ---
 async def start_bot():
     threading.Thread(target=run_flask, daemon=True).start()
-    application = ApplicationBuilder().token(TOKEN).build()
+    
+    # Adicionado timeouts para evitar desconexão na Render
+    application = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .build()
+    )
     
     application.add_handler(CommandHandler('bot', bot_intro))
     application.add_handler(CommandHandler('abastecer', abastecer_guia))
@@ -128,10 +150,12 @@ async def start_bot():
     async with application:
         await application.initialize()
         await application.start()
-        logger.info("🚀 BOT PRONTO E OPERANTE!")
+        logger.info("🚀 BOT RICK OPERANTE COM NOVO TOKEN!")
         await application.updater.start_polling(drop_pending_updates=True)
         while True: await asyncio.sleep(3600)
 
 if __name__ == '__main__':
-    try: asyncio.run(start_bot())
-    except (KeyboardInterrupt, SystemExit): pass
+    try:
+        asyncio.run(start_bot())
+    except (KeyboardInterrupt, SystemExit):
+        pass
