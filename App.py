@@ -4,20 +4,18 @@ import asyncio
 import threading
 import re
 from datetime import datetime, timedelta
-from flask import Flask, request
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from pymongo import MongoClient
 
-# --- CONFIGURAÇÕES DE LOGS ---
+# --- LOGS ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- DADOS DO BOT ---
+# --- DADOS ---
 TOKEN = "8479454342:AAH8qyPoDFyTEfzaUQGP3wsEjnbB3Z_aI2s"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
-RENDER_URL = "https://bot-streaming-rick.onrender.com"
-
 ALLOWED_GROUP_ID = -1003429027149 
 OWNER_ID = 1031830691 
 VENDAS_URL = "https://t.me/RickSpaces"
@@ -33,28 +31,42 @@ def escape_md(text):
         text = str(text).replace(char, f"\\{char}")
     return text
 
-# --- INSTÂNCIA DO BOT ---
-application = ApplicationBuilder().token(TOKEN).build()
+# Função para apagar mensagem
+async def auto_delete(context, chat_id, msg_id, tempo):
+    await asyncio.sleep(tempo)
+    try: await context.bot.delete_message(chat_id, msg_id)
+    except: pass
 
-# --- COMANDOS DO GRUPO ---
+# --- COMANDOS ---
+async def bot_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != ALLOWED_GROUP_ID: return
+    est = "".join([f"▪️ /{s.capitalize()}: {db[s].count_documents({})}\n" for s in SERVICOS])
+    txt = f"👋 *Botricks Online*\n\n📊 *ESTOQUE:* \n{est}"
+    m = await update.message.reply_text(txt, parse_mode='MarkdownV2')
+    context.application.create_task(auto_delete(context, update.effective_chat.id, m.message_id, 20))
+
 async def gerar_servico(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_chat or update.effective_chat.id != ALLOWED_GROUP_ID: return
-    
+    if update.effective_chat.id != ALLOWED_GROUP_ID: return
     servico = update.message.text.replace("/", "").lower()
     if servico not in SERVICOS: return
     
     uid = update.effective_user.id
+    if uid in cooldowns and datetime.now() < cooldowns[uid] and uid != OWNER_ID:
+        try: await update.message.delete()
+        except: pass
+        return
+
     res = list(db[servico].aggregate([{"$sample": {"size": 1}}]))
-    
     if res:
+        cooldowns[uid] = datetime.now() + timedelta(seconds=60)
         dados = res[0].get('dados', 'erro:erro')
         email, senha = dados.split(':', 1) if ":" in dados else (dados, "---")
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{uid}"), InlineKeyboardButton("🛒 COMPRAR", url=VENDAS_URL)]])
-        
         txt = f"✅ *{servico.upper()}*\n\n✉️ E-mail: `{escape_md(email)}`\n🔑 Senha: `{escape_md(senha)}`"
-        await update.message.reply_text(txt, parse_mode='MarkdownV2', reply_markup=kb)
+        msg = await update.message.reply_text(txt, parse_mode='MarkdownV2', reply_markup=kb)
         try: await update.message.delete()
         except: pass
+        context.application.create_task(auto_delete(context, update.effective_chat.id, msg.message_id, 180))
     else:
         await update.message.reply_text(f"⚠️ {servico.upper()} vazio!")
 
@@ -65,41 +77,28 @@ async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await query.message.delete()
         except: pass
 
-async def bot_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id != ALLOWED_GROUP_ID: return
-    est = "".join([f"▪️ /{s.capitalize()}: {db[s].count_documents({})}\n" for s in SERVICOS])
-    await update.message.reply_text(f"👋 *Botricks Online*\n\n📊 *ESTOQUE:* \n{est}", parse_mode='MarkdownV2')
+# --- SERVER FLASK ---
+server = Flask(__name__)
+@server.route('/')
+def h(): return "Bot Ativo", 200
 
-# --- WEB SERVER (FLASK) ---
-app = Flask(__name__)
+def run_flask():
+    server.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
-@app.route(f'/{TOKEN}', methods=['POST'])
-async def respond(): # O Flask agora aceita 'async def' por causa do flask[async]
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        await application.process_update(update)
-        return 'ok', 200
+# --- FUNÇÃO PRINCIPAL ---
+if __name__ == '__main__':
+    # Inicia o Flask em uma thread para a Render não dar erro de porta
+    threading.Thread(target=run_flask, daemon=True).start()
 
-@app.route('/')
-def index():
-    return "BOT RICK STATUS: ONLINE", 200
-
-async def setup_bot():
+    # Inicia o Bot usando o método run_polling (Mais estável que Webhook para conflitos)
+    application = ApplicationBuilder().token(TOKEN).build()
+    
     application.add_handler(CommandHandler('bot', bot_intro))
     application.add_handler(CallbackQueryHandler(query_handler))
     for s in SERVICOS:
         application.add_handler(CommandHandler(s.capitalize(), gerar_servico))
         application.add_handler(CommandHandler(s.lower(), gerar_servico))
-    
-    webhook_url = f"{RENDER_URL}/{TOKEN}"
-    await application.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-    logger.info(f"✅ WEBHOOK SETADO: {webhook_url}")
 
-if __name__ == '__main__':
-    # Inicializa o bot dentro de um loop de eventos
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(setup_bot())
-    
-    # Inicia o servidor Flask (A Render cuida do loop daqui pra frente)
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    logger.info("🚀 BOT INICIANDO POLLING...")
+    # drop_pending_updates=True resolve o erro de Conflict de uma vez por todas
+    application.run_polling(drop_pending_updates=True)
