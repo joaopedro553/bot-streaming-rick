@@ -1,10 +1,9 @@
 import os
 import logging
 import asyncio
-import threading
 import re
 from datetime import datetime, timedelta
-from flask import Flask
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 from pymongo import MongoClient
@@ -13,9 +12,11 @@ from pymongo import MongoClient
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- DADOS ---
-TOKEN = "8479454342:AAH8qyPoDFyTEfzaUQGP3wsEjnbB3Z_aI2s"
+# --- CONFIGURAÇÕES DO BOT ---
+TOKEN = "8479454342:AAFq34sWRk16JgmOIUWDq7ZVY7hLpfPLMjo"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
+RENDER_URL = "https://bot-streaming-rick.onrender.com"
+
 ALLOWED_GROUP_ID = -1003429027149 
 OWNER_ID = 1031830691 
 VENDAS_URL = "https://t.me/RickSpaces"
@@ -26,56 +27,60 @@ client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=20000)
 db = client['streaming_db']
 cooldowns = {}
 
+# Instância do Bot e Flask
+app = Flask(__name__)
+application = ApplicationBuilder().token(TOKEN).build()
+
 def escape_md(text):
-    """Limpa caracteres para o MarkdownV2"""
-    for char in [r'.', r'-', r'!', r'(', r')', r'{', r'}', r'[', r']', r'#', r'+']:
+    """Escapa caracteres para MarkdownV2"""
+    for char in [r'.', r'-', r'!', r'(', r')', r'{', r'}', r'[', r']', r'#', r'+', r'_']:
         text = str(text).replace(char, f"\\{char}")
     return text
 
-# Função para apagar mensagem
-async def auto_delete_task(context, chat_id, msg_id, tempo):
-    await asyncio.sleep(tempo)
-    try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-    except:
-        pass
+# --- COMANDOS DO GRUPO ---
 
-# --- COMANDOS ---
 async def bot_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_chat or update.effective_chat.id != ALLOWED_GROUP_ID: return
+    if update.effective_chat.id != ALLOWED_GROUP_ID: return
     est = ""
     for s in SERVICOS:
         qtd = db[s].count_documents({})
         est += f"▪️ /{s.capitalize()}: {qtd}\n"
-    txt = r"👋 *Botricks Online*" + "\n\n" + r"📊 *ESTOQUE DISPONÍVEL:*" + "\n" + est
+    
+    txt = fr"👋 *Botricks Online*" + "\n\n" + fr"📊 *ESTOQUE DISPONÍVEL:*" + "\n" + est
     await update.message.reply_text(txt, parse_mode='MarkdownV2')
 
 async def gerar_servico(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_chat or update.effective_chat.id != ALLOWED_GROUP_ID: return
+    if update.effective_chat.id != ALLOWED_GROUP_ID: return
     servico = update.message.text.replace("/", "").lower()
     if servico not in SERVICOS: return
+    
     uid = update.effective_user.id
     if uid in cooldowns and datetime.now() < cooldowns[uid] and uid != OWNER_ID:
-        try: await update.message.delete()
-        except: pass
         return
+
+    # Sorteia conta sem apagar (Estoque Infinito)
     res = list(db[servico].aggregate([{"$sample": {"size": 1}}]))
+    
     if res:
         cooldowns[uid] = datetime.now() + timedelta(seconds=60)
         dados = res[0].get('dados', 'erro:erro')
         email, senha = dados.split(':', 1) if ":" in dados else (dados, "---")
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{uid}"), InlineKeyboardButton("🛒 COMPRAR", url=VENDAS_URL)]])
-        txt = (fr"✅ *{servico.upper()}*" + "\n\n" + 
-               fr"✉️ E\-mail: `{escape_md(email)}`" + "\n" + 
-               fr"🔑 Senha: `{escape_md(senha)}`" + "\n\n" + 
-               fr"⚠️ Apagando em 3 minutos\.")
-        msg = await update.message.reply_text(txt, parse_mode='MarkdownV2', reply_markup=kb)
+        
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{uid}"),
+            InlineKeyboardButton("🛒 COMPRAR", url=VENDAS_URL)
+        ]])
+        
+        txt = (
+            fr"✅ *{servico.upper()} GERADA*" + "\n\n" +
+            fr"✉️ E\-mail: `{escape_md(email)}`" + "\n" +
+            fr"🔑 Senha: `{escape_md(senha)}`"
+        )
+        await update.message.reply_text(txt, parse_mode='MarkdownV2', reply_markup=kb)
         try: await update.message.delete()
         except: pass
-        # Agenda o delete
-        context.job_queue.run_once(lambda c: asyncio.create_task(context.bot.delete_message(update.effective_chat.id, msg.message_id)), 180)
     else:
-        await update.message.reply_text(f"⚠️ {servico.upper()} vazio!")
+        await update.message.reply_text(f"⚠️ {servico.upper()} sem estoque!")
 
 async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -84,30 +89,38 @@ async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await query.message.delete()
         except: pass
 
-# --- SERVER FLASK ---
-app = Flask(__name__)
+# --- ROTAS WEBHOOK ---
+
+@app.route(f'/{TOKEN}', methods=['POST'])
+async def webhook_handler():
+    if request.method == "POST":
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        await application.process_update(update)
+        return "ok", 200
+
 @app.route('/')
-def h(): return "Bot Ativo", 200
+def index():
+    return "BOT RICK STATUS: ONLINE", 200
 
-def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+# --- INICIALIZAÇÃO ---
 
-# --- FUNÇÃO PRINCIPAL ---
-def main():
-    # Primeiro inicia o Flask
-    threading.Thread(target=run_flask, daemon=True).start()
-
-    # Inicia o Bot usando o modo padrão da biblioteca (Build -> Run)
-    application = ApplicationBuilder().token(TOKEN).build()
-    
+async def main():
+    # Registrar comandos
     application.add_handler(CommandHandler('bot', bot_intro))
     application.add_handler(CallbackQueryHandler(query_handler))
     for s in SERVICOS:
         application.add_handler(CommandHandler(s.capitalize(), gerar_servico))
         application.add_handler(CommandHandler(s.lower(), gerar_servico))
-
-    logger.info("🚀 INICIANDO BOT...")
-    application.run_polling(drop_pending_updates=True)
+    
+    # Configurar Webhook no Telegram
+    webhook_url = f"{RENDER_URL}/{TOKEN}"
+    await application.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+    logger.info(f"✅ Webhook ativado em: {webhook_url}")
 
 if __name__ == '__main__':
-    main()
+    # Inicia o Webhook em background
+    asyncio.run(main())
+    
+    # Inicia o servidor Flask na porta da Render
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
