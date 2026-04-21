@@ -30,8 +30,10 @@ client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=20000)
 db = client['streaming_db']
 cooldowns = {}
 
+# Variável global para o loop de eventos
+main_loop = None
+
 def escape_md(text):
-    """Limpa caracteres especiais para evitar erro no Telegram MarkdownV2"""
     for char in [r'.', r'-', r'!', r'(', r')', r'{', r'}', r'[', r']', r'#', r'+']:
         text = str(text).replace(char, f"\\{char}")
     return text
@@ -39,125 +41,98 @@ def escape_md(text):
 # --- INSTÂNCIA DO BOT ---
 application = ApplicationBuilder().token(TOKEN).build()
 
-# --- COMANDOS ADMIN (DONO) ---
-
+# --- COMANDOS ADMIN ---
 async def abastecer_guia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    txt = "📦 *GUIA DE ABASTECIMENTO*\n\nEnvie o arquivo `\.txt` e na legenda escreva o serviço\.\nEx: `netflix` ou `disney`"
-    await update.message.reply_text(txt, parse_mode='MarkdownV2')
+    await update.message.reply_text("📦 *Envie o .txt e escreva o serviço na legenda (ex: netflix).*")
 
 async def receber_arquivo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     servico = update.message.caption.lower() if update.message.caption else ""
     if servico in SERVICOS:
         file = await context.bot.get_file(update.message.document.file_id)
-        content_bytes = await file.download_as_bytearray()
-        content = content_bytes.decode('utf-8')
+        content = (await file.download_as_bytearray()).decode('utf-8')
         docs = [{"dados": l.strip()} for l in content.splitlines() if ":" in l]
         if docs:
             db[servico].insert_many(docs)
-            await update.message.reply_text(f"🚀 Sucesso! {len(docs)} contas subidas para {servico}!")
-        else:
-            await update.message.reply_text("❌ Nenhuma conta válida encontrada (Formato email:pass).")
+            await update.message.reply_text(f"🚀 Sucesso! {len(docs)} contas em {servico}!")
 
 async def limpa_generic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    servico = update.message.text.lower().replace("/limpa_", "")
-    if servico in SERVICOS:
-        db[servico].delete_many({})
-        await update.message.reply_text(f"🗑️ Estoque de {servico.upper()} zerado!")
+    s = update.message.text.lower().replace("/limpa_", "")
+    if s in SERVICOS:
+        db[s].delete_many({})
+        await update.message.reply_text(f"🗑️ Estoque de {s.upper()} zerado!")
 
-# --- MOTOR DO GRUPO (ESTOQUE INFINITO) ---
-
+# --- MOTOR DO GRUPO ---
 async def gerar_servico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_GROUP_ID: return
     servico = update.message.text.replace("/", "").lower()
     if servico not in SERVICOS: return
     
     uid = update.effective_user.id
-    agora = datetime.now()
-
-    # Cooldown 60s
-    if uid in cooldowns and agora < cooldowns[uid] and uid != OWNER_ID:
-        try: await update.message.delete()
-        except: pass
-        return
-
-    # Sorteia 1 conta sem apagar do banco
     res = list(db[servico].aggregate([{"$sample": {"size": 1}}]))
-    
     if res:
-        cooldowns[uid] = agora + timedelta(seconds=60)
         dados = res[0].get('dados', 'erro:erro')
         email, senha = dados.split(':', 1) if ":" in dados else (dados, "---")
-
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗑️ APAGAR CONTA", callback_data=f"del_{uid}")],
-            [InlineKeyboardButton("🛒 COMPRE SEUS STREAMING", url=VENDAS_URL)]
-        ])
-        
-        txt = (
-            f"✅ *{servico.upper()} GERADA*\n\n"
-            f"✉️ E\-mail: `{escape_md(email)}`\n"
-            f"🔑 Senha: `{escape_md(senha)}`\n\n"
-            f"🤖 Grupo: [Clique aqui]({escape_md(LINK_GRUPO)})"
-        )
-        await update.message.reply_text(txt, parse_mode='MarkdownV2', reply_markup=kb, disable_web_page_preview=True)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{uid}"), InlineKeyboardButton("🛒 COMPRAR", url=VENDAS_URL)]])
+        txt = f"✅ *{servico.upper()}*\n\n✉️ E-mail: `{escape_md(email)}`\n🔑 Senha: `{escape_md(senha)}`"
+        await update.message.reply_text(txt, parse_mode='MarkdownV2', reply_markup=kb)
         try: await update.message.delete()
         except: pass
     else:
-        await update.message.reply_text(f"⚠️ {servico.upper()} sem estoque!")
+        await update.message.reply_text(f"⚠️ {servico.upper()} vazio!")
 
 async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    uid_clicou = query.from_user.id
-    uid_dono = int(query.data.split("_")[1])
-    if uid_clicou in [uid_dono, OWNER_ID]:
+    if query.from_user.id in [int(query.data.split("_")[1]), OWNER_ID]:
         try: await query.message.delete()
         except: pass
-
-async def bot_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id != ALLOWED_GROUP_ID: return
-    est = "".join([f"▪️ /{s.capitalize()}: {db[s].count_documents({})}\n" for s in SERVICOS])
-    txt = f"👋 *Botricks Online*\n\n📊 *ESTOQUE:* \n{est}"
-    await update.message.reply_text(txt, parse_mode='MarkdownV2')
 
 # --- WEB SERVER (FLASK) ---
 app = Flask(__name__)
 
 @app.route(f'/{TOKEN}', methods=['POST'])
-async def respond():
+def respond():
+    # Esta função agora é síncrona para evitar o erro do Flask
     update = Update.de_json(request.get_json(force=True), application.bot)
-    await application.process_update(update)
-    return 'ok'
+    # Enviamos o processamento para o loop principal do bot
+    asyncio.run_coroutine_threadsafe(application.process_update(update), main_loop)
+    return 'ok', 200
 
 @app.route('/')
 def index():
-    return "BOT STATUS: ONLINE", 200
+    return "BOT RICK STATUS: ONLINE", 200
 
 async def setup_webhook():
-    # Registrar comandos e botões
-    application.add_handler(CommandHandler('bot', bot_intro))
+    application.add_handler(CommandHandler('bot', lambda u, c: u.message.reply_text("👋 Use os comandos /Servico")))
     application.add_handler(CommandHandler('abastecer', abastecer_guia))
     application.add_handler(CallbackQueryHandler(query_handler))
     application.add_handler(MessageHandler(filters.Document.MimeType("text/plain"), receber_arquivo))
     for s in SERVICOS:
-        application.add_handler(CommandHandler(f'Limpa_{s}', limpa_generic))
         application.add_handler(CommandHandler(s.capitalize(), gerar_servico))
         application.add_handler(CommandHandler(s.lower(), gerar_servico))
+        application.add_handler(CommandHandler(f"Limpa_{s}", limpa_generic))
     
-    # Ativar Webhook
     webhook_url = f"{RENDER_URL}/{TOKEN}"
     await application.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-    logger.info(f"✅ WEBHOOK ATIVADO: {webhook_url}")
+    logger.info(f"✅ WEBHOOK SETADO: {webhook_url}")
 
-if __name__ == '__main__':
-    # Configuração de inicialização
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(setup_webhook())
-    
-    # Roda o servidor na porta da Render
+def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+
+if __name__ == '__main__':
+    # Salva o loop atual para uso global
+    main_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(main_loop)
+    
+    # Prepara o bot
+    main_loop.run_until_complete(setup_webhook())
+    
+    # Inicia o servidor Flask em uma thread separada
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Mantém o loop principal rodando para processar mensagens
+    main_loop.run_forever()
