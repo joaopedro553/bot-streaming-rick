@@ -7,7 +7,6 @@ from pymongo import MongoClient
 from telebot import types
 
 # --- CONFIGURAÇÕES ---
-# Pega as variáveis que você configurou na aba Environment da Render
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 
@@ -19,14 +18,13 @@ VENDAS_URL = "https://t.me/RickSpaces"
 bot = telebot.TeleBot(TOKEN)
 SERVICOS = ['netflix', 'disney', 'max', 'prime', 'crunchyroll', 'apple', 'globoplay', 'clarotv']
 
-# Conectar MongoDB com proteção
+# Conectar MongoDB
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
     db = client['streaming_db']
-    client.admin.command('ping')
     print("✅ BANCO DE DADOS CONECTADO!")
 except Exception as e:
-    print(f"⚠️ Erro ao conectar banco: {e}")
+    print(f"⚠️ Erro no banco: {e}")
 
 # --- COMANDOS ---
 
@@ -56,32 +54,35 @@ def handle_gerar(message):
             kb.add(types.InlineKeyboardButton("🛒 COMPRAR", url=VENDAS_URL))
             
             bot.send_message(message.chat.id, f"✅ *{servico.upper()} GERADA*\n\n`{dados}`", parse_mode='Markdown', reply_markup=kb)
-            bot.delete_message(message.chat.id, message.message_id)
+            try: bot.delete_message(message.chat.id, message.message_id)
+            except: pass
         else:
             bot.reply_to(message, f"⚠️ {servico} sem estoque!")
     except:
         bot.reply_to(message, "❌ Erro ao acessar o banco.")
 
-# --- SERVER PARA RENDER (O SEGREDO DA PORTA 10000) ---
+# --- SERVER PARA RENDER (PORTA 10000) ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "BOT RICK IS LIVE", 200
+    return "BOT IS LIVE", 200
 
 def run_flask():
-    # A Render exige a porta 10000. Se o bot usar outra, ele dá "Failed"
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
+# --- INICIALIZAÇÃO ---
 if __name__ == "__main__":
-    # 1. Liga o Flask primeiro (Render Health Check)
+    # 1. Liga o servidor Flask primeiro
     threading.Thread(target=run_flask, daemon=True).start()
-    print("🚀 Servidor Web rodando na porta 10000...")
+    print("🚀 Servidor Web OK na porta 10000")
     
-    # 2. Pequeno descanso para a rede estabilizar
-    time.sleep(3)
+    # 2. O SEGREDO: Remove qualquer Webhook que esteja travando a conta
+    print("🧹 Limpando conexões antigas (Webhook)...")
+    bot.remove_webhook()
+    time.sleep(2)
     
     # 3. Liga o Bot
-    print("🤖 Bot Thomas Checker conectando ao Telegram...")
+    print("🤖 Bot Thomas Checker Online!")
     bot.infinity_polling(skip_pending=True)
