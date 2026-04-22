@@ -1,22 +1,21 @@
 import telebot
 import os
 import threading
+import time
 from flask import Flask
 from pymongo import MongoClient
 from telebot import types
 
 # --- CONFIGURAÇÕES ---
-TOKEN = "8479454342:AAFq34sWRk16JgmOIUWDq7ZVY7hLpfPLMjo"
+TOKEN = "8479454342:AAH8qyPoDFyTEfzaUQGP3wsEjnbB3Z_aI2s"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
 ALLOWED_GROUP_ID = -1003429027149 
-OWNER_ID = 1031830691
 
 bot = telebot.TeleBot(TOKEN)
 client = MongoClient(MONGO_URI)
 db = client['streaming_db']
 SERVICOS = ['netflix', 'disney', 'max', 'prime', 'crunchyroll', 'apple', 'globoplay', 'clarotv']
 
-# --- BOT ---
 @bot.message_handler(commands=['bot'])
 def send_intro(message):
     if message.chat.id != ALLOWED_GROUP_ID: return
@@ -34,31 +33,27 @@ def handle_gerar(message):
     if res:
         dados = res[0].get('dados', 'erro:erro')
         kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{message.from_user.id}"))
+        kb.add(types.InlineKeyboardButton("🛒 COMPRAR", url="https://t.me/RickSpaces"))
         bot.send_message(message.chat.id, f"✅ *{servico.upper()} GERADA*\n\n`{dados}`", parse_mode='Markdown', reply_markup=kb)
-        try: bot.delete_message(message.chat.id, message.message_id)
-        except: pass
     else:
         bot.reply_to(message, f"⚠️ {servico} vazio!")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))
-def handle_delete(call):
-    if call.from_user.id == int(call.data.split('_')[1]) or call.from_user.id == OWNER_ID:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-
-# --- SERVER FLASK (Obrigatório para Render) ---
+# --- SERVER PARA RENDER ---
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Bot Ativo", 200
+def home(): return "OK", 200
 
 def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=10000)
 
 if __name__ == "__main__":
-    # Remove qualquer webhook antigo para evitar o erro 409
-    bot.remove_webhook()
-    # Inicia o servidor de rede
+    # Inicia o Flask
     threading.Thread(target=run_flask).start()
-    print("🚀 Bot Iniciado!")
+    
+    # Limpeza e início
+    print("🚀 Limpando e iniciando...")
+    bot.remove_webhook()
+    time.sleep(2)
+    
+    # Polling com skip_pending=True limpa as mensagens acumuladas
     bot.infinity_polling(skip_pending=True)
