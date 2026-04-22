@@ -1,3 +1,4 @@
-pyTelegramBotAPI
-pymongo
+pyTelegramBotAPI==4.20.0
+pymongo[srv]
 flask
+gunicorn
