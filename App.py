@@ -7,7 +7,7 @@ from pymongo import MongoClient
 from telebot import types
 
 # --- CONFIGURAÇÕES ---
-TOKEN = "8479454342:AAH8qyPoDFyTEfzaUQGP3wsEjnbB3Z_aI2s"
+TOKEN = "8479454342:AAEtmo-XK5QpurATxBbUSFNrciwymEk3h40"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
 
 # LISTA DE GRUPOS AUTORIZADOS (Adicionei o novo aqui)
