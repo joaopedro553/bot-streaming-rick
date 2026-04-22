@@ -7,12 +7,12 @@ from pymongo import MongoClient
 from telebot import types
 
 # --- CONFIGURAÇÕES ---
-TOKEN = "8479454342:AAEtmo-XK5QpurATxBbUSFNrciwymEk3h40"
+TOKEN = "8479454342:AAFq34sWRk16JgmOIUWDq7ZVY7hLpfPLMjo"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
 
 # LISTA DE GRUPOS AUTORIZADOS
 ALLOWED_GROUPS = [-1003429027149, -1003961419582]
-OWNER_ID = 1031830691
+OWNER_ID = 1031830691 # Seu ID: Thomas
 VENDAS_URL = "https://t.me/RickSpaces"
 
 # Inicialização
@@ -21,57 +21,108 @@ client = MongoClient(MONGO_URI)
 db = client['streaming_db']
 SERVICOS = ['netflix', 'disney', 'max', 'prime', 'crunchyroll', 'apple', 'globoplay', 'clarotv']
 
+# --- FILTROS DE SEGURANÇA ---
+def is_allowed(message):
+    # Permite se for um dos grupos autorizados OU se for o dono no privado
+    if message.chat.id in ALLOWED_GROUPS:
+        return True
+    if message.from_user.id == OWNER_ID and message.chat.type == 'private':
+        return True
+    return False
+
 # --- COMANDOS ---
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    if message.from_user.id == OWNER_ID:
+        bot.reply_to(message, "👑 Olá Chefe! Eu respondo você aqui no privado agora.\nUse /abastecer para ver o guia.")
+    elif message.chat.id in ALLOWED_GROUPS:
+        bot.reply_to(message, "🚀 Use /bot para ver o estoque!")
 
 @bot.message_handler(commands=['bot'])
 def send_intro(message):
-    if message.chat.id not in ALLOWED_GROUPS: return
+    if not is_allowed(message): return
+    
     estoque = ""
     for s in SERVICOS:
         try:
             qtd = db[s].count_documents({})
             estoque += f"▪️ /{s.capitalize()}: {qtd}\n"
         except: estoque += f"▪️ /{s.capitalize()}: 0\n"
+    
     bot.reply_to(message, f"👋 *Botricks Online*\n\n📊 *ESTOQUE:* \n{estoque}", parse_mode='Markdown')
+
+@bot.message_handler(commands=['abastecer'])
+def help_abastecer(message):
+    if message.from_user.id != OWNER_ID: return
+    txt = (
+        "📦 *GUIA DO MESTRE*\n\n"
+        "Para subir contas, envie o arquivo `.txt` aqui e na legenda escreva o serviço.\n\n"
+        "*Exemplo de Legenda:* `netflix`"
+    )
+    bot.reply_to(message, txt, parse_mode='Markdown')
 
 @bot.message_handler(commands=SERVICOS + [s.capitalize() for s in SERVICOS])
 def handle_gerar(message):
-    if message.chat.id not in ALLOWED_GROUPS: return
+    if not is_allowed(message): return
+    
     servico = message.text.replace("/", "").lower()
     res = list(db[servico].aggregate([{"$sample": {"size": 1}}]))
+    
     if res:
         dados = res[0].get('dados', 'erro:erro')
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{message.from_user.id}"),
                types.InlineKeyboardButton("🛒 COMPRAR", url=VENDAS_URL))
+        
         bot.send_message(message.chat.id, f"✅ *{servico.upper()} GERADA*\n\n`{dados}`", parse_mode='Markdown', reply_markup=kb)
-        try: bot.delete_message(message.chat.id, message.message_id)
-        except: pass
+        # Apaga o comando apenas se for em grupo
+        if message.chat.type != 'private':
+            try: bot.delete_message(message.chat.id, message.message_id)
+            except: pass
     else:
         bot.reply_to(message, f"⚠️ {servico} vazio!")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))
 def handle_delete(call):
+    # Permite apagar se for o dono da conta ou o dono do bot
     if call.from_user.id == int(call.data.split('_')[1]) or call.from_user.id == OWNER_ID:
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
         except: pass
 
-# --- SERVER PARA RENDER ---
+# --- GESTÃO (SÓ DONO) ---
+
+@bot.message_handler(content_types=['document'])
+def handle_docs(message):
+    if message.from_user.id != OWNER_ID: return
+    servico = message.caption.lower() if message.caption else ""
+    if servico in SERVICOS:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        content = downloaded_file.decode('utf-8')
+        docs = [{"dados": l.strip()} for l in content.splitlines() if ":" in l]
+        if docs:
+            db[servico].insert_many(docs)
+            bot.reply_to(message, f"🚀 Sucesso! {len(docs)} contas em {servico}!")
+
+@bot.message_handler(func=lambda m: m.text and m.text.startswith("/Limpa_"))
+def handle_limpa(message):
+    if message.from_user.id != OWNER_ID: return
+    s = message.text.lower().replace("/limpa_", "")
+    if s in SERVICOS:
+        db[s].delete_many({})
+        bot.reply_to(message, f"🗑️ Estoque de {s.upper()} zerado!")
+
+# --- SERVER FLASK ---
 app = Flask(__name__)
 @app.route('/')
-def home(): return "BOT RICK STATUS: OK", 200
+def home(): return "BOT OK", 200
 
 def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=10000)
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
-    
-    # Limpeza profunda para evitar erro 409
-    print("🚀 Limpando e iniciando com novo token...")
     bot.remove_webhook()
-    time.sleep(2)
-    
-    # Inicia o bot ignorando mensagens acumuladas (limpa o cache do erro)
+    print("🚀 Bot Iniciado (Grupos + Privado do Dono)!")
     bot.infinity_polling(skip_pending=True)
