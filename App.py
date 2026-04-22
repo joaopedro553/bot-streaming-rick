@@ -7,6 +7,7 @@ from pymongo import MongoClient
 from telebot import types
 
 # --- CONFIGURAÇÕES ---
+# Pega das variáveis de ambiente da Render (Environment)
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 
@@ -14,7 +15,7 @@ ALLOWED_GROUP_ID = -1003429027149
 OWNER_ID = 1031830691
 VENDAS_URL = "https://t.me/RickSpaces"
 
-# Inicialização
+# Inicialização do Bot
 bot = telebot.TeleBot(TOKEN)
 SERVICOS = ['netflix', 'disney', 'max', 'prime', 'crunchyroll', 'apple', 'globoplay', 'clarotv']
 
@@ -38,7 +39,7 @@ def send_intro(message):
             estoque += f"▪️ /{s.capitalize()}: {qtd}\n"
         except: estoque += f"▪️ /{s.capitalize()}: 0\n"
     
-    txt = f"👋 *Botricks Online*\n\n📊 *ESTOQUE ATUAL:* \n{estoque}\n\n💡 _Contas infinitas (sorteio aleatório)_"
+    txt = f"👋 *Botricks Online*\n\n📊 *ESTOQUE ATUAL:* \n{estoque}\n\n💡 _Sorteio aleatório ativado!_"
     bot.reply_to(message, txt, parse_mode='Markdown')
 
 @bot.message_handler(commands=SERVICOS + [s.capitalize() for s in SERVICOS])
@@ -47,6 +48,7 @@ def handle_gerar(message):
     servico = message.text.replace("/", "").lower()
     
     try:
+        # Sorteia 1 conta (Estoque Infinito)
         res = list(db[servico].aggregate([{"$sample": {"size": 1}}]))
         if res:
             dados = res[0].get('dados', 'erro:erro')
@@ -74,15 +76,16 @@ def run_flask():
 
 # --- INICIALIZAÇÃO ---
 if __name__ == "__main__":
-    # 1. Liga o servidor Flask primeiro
+    # 1. Inicia o Flask para a Render não dar erro de porta
     threading.Thread(target=run_flask, daemon=True).start()
-    print("🚀 Servidor Web OK na porta 10000")
-    
-    # 2. O SEGREDO: Remove qualquer Webhook que esteja travando a conta
-    print("🧹 Limpando conexões antigas (Webhook)...")
+    print("🚀 Servidor Web iniciado...")
+
+    # 2. Limpeza profunda de Webhook (Corrige o erro 409)
+    print("🧹 Removendo Webhooks antigos...")
     bot.remove_webhook()
-    time.sleep(2)
-    
-    # 3. Liga o Bot
-    print("🤖 Bot Thomas Checker Online!")
+    time.sleep(1) # Pequena pausa para o Telegram processar
+
+    # 3. Liga o Bot no modo Polling
+    print("🤖 Bot Thomas Checker Online e pronto!")
+    # skip_pending=True ignora mensagens enviadas enquanto o bot estava dando erro
     bot.infinity_polling(skip_pending=True)
