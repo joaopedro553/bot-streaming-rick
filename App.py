@@ -5,6 +5,7 @@ import time
 from flask import Flask
 from pymongo import MongoClient
 from telebot import types
+from telebot.apihelper import ApiTelegramException
 
 # --- CONFIGURAÇÕES ---
 TOKEN = "8479454342:AAEQC1Ar2R-zwdD6tWb1fIzDqUlIP3q7RfU"
@@ -54,15 +55,18 @@ def handle_gerar(message):
     res = list(db[servico].aggregate([{"$sample": {"size": 1}}]))
     if res:
         dados = res[0].get('dados', 'erro:erro')
+        email, senha = dados.split(':', 1) if ":" in dados else (dados, "---")
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{message.from_user.id}"),
                types.InlineKeyboardButton("🛒 COMPRAR", url=VENDAS_URL))
-        bot.send_message(message.chat.id, f"✅ *{servico.upper()} GERADA*\n\n`{dados}`", parse_mode='Markdown', reply_markup=kb)
+        
+        txt = f"✅ *{servico.upper()} GERADA*\n\n✉️ E-mail: `{email}`\n🔑 Senha: `{senha}`"
+        bot.send_message(message.chat.id, txt, parse_mode='Markdown', reply_markup=kb)
         if message.chat.type != 'private':
             try: bot.delete_message(message.chat.id, message.message_id)
             except: pass
     else:
-        bot.reply_to(message, f"⚠️ {servico} vazio!")
+        bot.reply_to(message, f"⚠️ {servico} sem estoque!")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))
 def handle_delete(call):
@@ -89,7 +93,7 @@ def handle_limpa(message):
     s = message.text.lower().replace("/limpa_", "")
     if s in SERVICOS:
         db[s].delete_many({})
-        bot.reply_to(message, f"🗑️ {s.upper()} zerado!")
+        bot.reply_to(message, f"🗑️ Estoque de {s.upper()} zerado!")
 
 # --- SERVER PARA RENDER ---
 app = Flask(__name__)
@@ -102,10 +106,20 @@ def run_flask():
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     
-    # MATANDO CONEXÕES ANTIGAS
-    print("🧹 Limpando conexões...")
-    bot.remove_webhook()
-    time.sleep(5) # Espera o Telegram processar a limpeza
+    print("🚀 Iniciando Botricks...")
     
-    print("🚀 Bot Iniciado!")
-    bot.infinity_polling(skip_pending=True)
+    while True:
+        try:
+            bot.remove_webhook()
+            # Inicia o bot. Se der erro 409, ele cai no except abaixo.
+            bot.infinity_polling(skip_pending=True, timeout=20)
+        except ApiTelegramException as e:
+            if e.error_code == 409:
+                print("⚠️ Conflito de Token (outra instância ligada). Aguardando 10 segundos...")
+                time.sleep(10)
+            else:
+                print(f"❌ Erro na API: {e}")
+                time.sleep(5)
+        except Exception as e:
+            print(f"❌ Erro desconhecido: {e}")
+            time.sleep(5)
