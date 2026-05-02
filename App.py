@@ -9,12 +9,13 @@ from pymongo import MongoClient
 from telebot import types
 
 # --- CONFIGURAÇÕES ---
-TOKEN = "8479454342:AAH8qyPoDFyTEfzaUQGP3wsEjnbB3Z_aI2s"
+# NOVO TOKEN ATUALIZADO
+TOKEN = "8479454342:AAEaNuwOS9WJnTrDb_LmSvWHAw0AbFRB7iU"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
 
 # GRUPOS AUTORIZADOS
 ALLOWED_GROUPS = [-1003429027149, -1003961419582, -1003802687191]
-OWNER_ID = 1031830691 
+OWNER_ID = 1031830691 # Thomas
 LINK_GRUPO_GRATIS = "https://t.me/ThomasAccount01"
 CREDITOS = "@ThomasObscuro"
 
@@ -23,11 +24,10 @@ bot = telebot.TeleBot(TOKEN)
 client = MongoClient(MONGO_URI)
 db = client['streaming_db']
 
-# --- CATEGORIAS ---
-# Incluindo Cookies e as que você pediu
+# --- CATEGORIAS AO EXTREMO ---
 CATEGORIAS = {
     "🎬 FILMES E SÉRIES": ['netflix', 'disney', 'max', 'prime', 'paramount', 'apple', 'star', 'hulu', 'vix', 'peacock'],
-    "🍪 COOKIES (Navegador)": ['netflix_cookies', 'prime_cookies'],
+    "🍪 COOKIES": ['netflix_cookies', 'prime_cookies'],
     "📺 TV E CANAIS": ['globoplay', 'clarotv', 'vivoplay', 'telecine', 'directv', 'plex'],
     "⚽ ESPORTES": ['premiere', 'espn', 'dazn'],
     "🛠️ FERRAMENTAS": ['duolingo', 'canva', 'scribd', 'youtube'],
@@ -37,40 +37,55 @@ SERVICOS_FLAT = [item for sublist in CATEGORIAS.values() for item in sublist]
 
 # --- FUNÇÕES INTELIGENTES ---
 
+def escape_md(text):
+    """Protege o texto contra erros de formatação do Telegram"""
+    for char in [r'.', r'-', r'!', r'(', r')', r'{', r'}', r'[', r']', r'#', r'+', r'_']:
+        text = str(text).replace(char, f"\\{char}")
+    return text
+
 def formatar_entrega(servico, dados):
-    """Identifica o formato e deixa clicável da melhor forma"""
-    servico_upper = servico.upper().replace("_", " ")
+    """Analisa o conteúdo e formata de acordo com o tipo de conta"""
+    servico_title = servico.upper().replace("_", " ")
     
-    # Se for formato de Bloco (Claro TV exemplo ou JSON de Cookies)
-    if "║" in dados or "╔" in dados or dados.startswith("[") or "\n" in dados:
-        return (f"✅ *{servico_upper} GERADA\!*\n\n"
+    # Se for Bloco de Texto (Claro TV, Cookies ou Listas Longas)
+    if "║" in dados or dados.startswith("[") or dados.startswith("{") or "\n" in dados:
+        return (f"✅ *{servico_title} GERADA\!*\n\n"
                 f"```\n{dados}\n```\n\n"
                 f"🚀 *Créditos:* {CREDITOS}")
     
-    # Se for formato email:pass
+    # Se for formato padrão email:senha
     if ":" in dados:
-        partes = dados.split(":", 1)
-        return (f"✅ *{servico_upper} GERADA\!*\n\n"
-                f"✉️ *E-mail:* `{partes[0]}`\n"
-                f"🔑 *Senha:* `{partes[1]}`\n\n"
+        email, senha = dados.split(":", 1)
+        return (f"✅ *{servico_title} GERADA\!*\n\n"
+                f"✉️ *E\-mail:* `{email}`\n"
+                f"🔑 *Senha:* `{senha}`\n\n"
                 f"🚀 *Créditos:* {CREDITOS}")
     
-    # Formato desconhecido (envia como código simples)
-    return f"✅ *{servico_upper} GERADA\!*\n\n`{dados}`\n\n🚀 *Créditos:* {CREDITOS}"
+    # Se for apenas um link ou código
+    return f"✅ *{servico_title} GERADA\!*\n\n`{dados}`\n\n🚀 *Créditos:* {CREDITOS}"
 
-# --- FILTROS ---
+# --- FILTROS DE PRIVADO ---
 
 @bot.message_handler(func=lambda m: m.chat.type == 'private' and m.from_user.id != OWNER_ID)
-def restringir_privado(message):
-    bot.reply_to(message, f"❌ *Acesso Negado\!*\n\nEu funciono apenas no meu Grupo VIP\. Gere suas contas clicando no link abaixo:\n\n👉 [Thomas Account 01]({LINK_GRUPO_GRATIS})", parse_mode='Markdown')
+def restringir_acesso(message):
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("⭐ ENTRAR NO GRUPO", url=LINK_GRUPO_GRATIS))
+    bot.reply_to(message, "❌ *Acesso Restrito\!*\n\nEu respondo apenas ao meu dono no privado\. Para gerar contas, entre no nosso grupo oficial abaixo:", parse_mode='Markdown', reply_markup=kb)
 
 # --- COMANDOS ---
 
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    if message.from_user.id == OWNER_ID:
+        bot.reply_to(message, "👑 *Thomas, o sistema está pronto\!*\n\nUse /bot para ver o estoque ou mande o arquivo \.txt para abastecer\.")
+    elif message.chat.id in ALLOWED_GROUPS:
+        bot.reply_to(message, "🚀 *Botricks V2 Online\!*\nUse /bot para ver o estoque disponível\.")
+
 @bot.message_handler(commands=['bot'])
-def send_menu(message):
+def menu_completo(message):
     if message.chat.id not in ALLOWED_GROUPS and message.from_user.id != OWNER_ID: return
     
-    txt = f"🛡️ *SISTEMA THOMAS CHECKER* \n👤 *Olá:* {message.from_user.first_name}\n\n"
+    txt = f"🛡️ *SISTEMA THOMAS CHECKER ATIVO*\n👤 *Thomas:* {CREDITOS}\n\n"
     for cat, lista in CATEGORIAS.items():
         txt += f"*{cat}*\n"
         for s in lista:
@@ -80,75 +95,76 @@ def send_menu(message):
             except: txt += f"🔹 /{s.capitalize()}: `0`\n"
         txt += "\n"
     
-    txt += f"👑 *Dono:* {CREDITOS}\n🛒 *Vendas:* @ThomasObscuro"
     bot.reply_to(message, txt, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text and m.text.startswith('/'))
-def handle_gen(message):
+def gerador_automatico(message):
     if message.chat.id not in ALLOWED_GROUPS and message.from_user.id != OWNER_ID: return
     
-    # Limpa o comando (tira o @bot)
+    # Limpa comando: /Netflix@bot -> netflix
     raw_cmd = message.text.split('@')[0].lower().replace("/", "")
     if raw_cmd not in SERVICOS_FLAT: return
 
-    # Sorteio
-    res = list(db[raw_cmd].aggregate([{"$sample": {"size": 1}}]))
-    if res:
-        dados_brutos = res[0].get('dados', 'erro:erro')
-        msg_formatada = formatar_entrega(raw_cmd, dados_brutos)
-        
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{message.from_user.id}"),
-               types.InlineKeyboardButton("🛒 COMPRAR", url="https://t.me/ThomasObscuro"))
-        
-        bot.send_message(message.chat.id, msg_formatada, parse_mode='Markdown', reply_markup=kb)
-        
-        if message.chat.type != 'private':
-            try: bot.delete_message(message.chat.id, message.message_id)
-            except: pass
-    else:
-        bot.reply_to(message, f"⚠️ Estoque de {raw_cmd.upper()} vazio!")
+    try:
+        # Sorteio aleatório (Sample size 1)
+        res = list(db[raw_cmd].aggregate([{"$sample": {"size": 1}}]))
+        if res:
+            dados_conta = res[0].get('dados', 'erro:erro')
+            msg_final = formatar_entrega(raw_cmd, dados_conta)
+            
+            kb = types.InlineKeyboardMarkup()
+            kb.row(types.InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{message.from_user.id}"),
+                   types.InlineKeyboardButton("🛒 COMPRAR", url="https://t.me/ThomasObscuro"))
+            
+            bot.send_message(message.chat.id, msg_final, parse_mode='Markdown', reply_markup=kb)
+            
+            # Limpa o chat
+            if message.chat.type != 'private':
+                try: bot.delete_message(message.chat.id, message.message_id)
+                except: pass
+        else:
+            bot.reply_to(message, f"⚠️ Estoque de {raw_cmd.upper()} vazio\!")
+    except Exception as e:
+        print(f"Erro: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))
-def handle_delete(call):
+def deletar_msg(call):
+    # Dono ou criador da conta podem apagar
     if call.from_user.id == int(call.data.split('_')[1]) or call.from_user.id == OWNER_ID:
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
         except: pass
 
-# --- GESTÃO (SÓ THOMAS NO PRIVADO) ---
+# --- ABASTECER E LIMPAR (SÓ DONO) ---
 
 @bot.message_handler(content_types=['document'])
-def handle_docs(message):
+def cadastrar_txt(message):
     if message.from_user.id != OWNER_ID: return
     servico = message.caption.lower() if message.caption else ""
     if servico in SERVICOS_FLAT:
         file_info = bot.get_file(message.document.file_id)
         content = bot.download_file(file_info.file_path).decode('utf-8')
-        
-        # Se for Cookies ou Listas longas, podemos subir o bloco inteiro ou por linhas
-        # Aqui, vamos subir por linhas para o sorteio funcionar
         docs = [{"dados": l.strip()} for l in content.splitlines() if len(l.strip()) > 5]
         if docs:
             db[servico].insert_many(docs)
-            bot.reply_to(message, f"🚀 Sucesso! {len(docs)} itens adicionados em {servico}!")
+            bot.reply_to(message, f"🚀 Thomas, {len(docs)} itens adicionados em {servico}\!")
     else:
-        bot.reply_to(message, "❌ Legenda inválida! Use o nome do serviço (ex: netflix_cookies).")
+        bot.reply_to(message, "❌ Legenda inválida\! Use o nome de um serviço (ex: netflix\_cookies)\.")
 
 @bot.message_handler(func=lambda m: m.text and m.text.startswith("/Limpa_"))
-def handle_limpa(message):
+def zerar_banco(message):
     if message.from_user.id != OWNER_ID: return
     s = message.text.lower().replace("/limpa_", "")
     if s in SERVICOS_FLAT:
         db[s].delete_many({})
-        bot.reply_to(message, f"🗑️ Estoque de {s.upper()} zerado!")
+        bot.reply_to(message, f"🗑️ Thomas, estoque de {s.upper()} zerado\!")
 
-# --- SERVER ---
+# --- SERVER PARA RENDER ---
 app = Flask(__name__)
 @app.route('/')
-def home(): return "THOMAS CHECKER V2 ONLINE", 200
+def home(): return "OK", 200
 
 if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
     bot.remove_webhook()
-    print("🚀 Botriks Ultra V2 Ativado!")
+    print("🚀 Bot Thomas V2 - Sistema Definitivo Online!")
     bot.infinity_polling(skip_pending=True)
