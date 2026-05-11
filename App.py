@@ -5,7 +5,7 @@ import time
 import re
 import io
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask
 from pymongo import MongoClient
 from telebot import types
@@ -22,7 +22,7 @@ CREDITOS = "@ThomasObscuro"
 bot = telebot.TeleBot(TOKEN, threaded=True)
 client = MongoClient(MONGO_URI)
 db = client['streaming_db']
-users_col = db['usuarios_stats'] # Coleção para contar as gerações diárias
+users_col = db['usuarios_stats']
 
 # Listas
 STREAMING = ['crunchyroll', 'disney', 'max', 'paramount', 'apple', 'globoplay', 'clarotv', 'vivoplay', 'plex', 'viki', 'vix', 'dazn', 'duolingo']
@@ -32,20 +32,12 @@ ALL_SERVICES = STREAMING + FILES_SERVICES + ['netflix', 'iptv']
 # --- FUNÇÕES DE APOIO ---
 
 def get_daily_count(user_id):
-    """Gerencia o contador diário de cada usuário"""
     hoje = datetime.now().strftime("%Y-%m-%d")
     user_data = users_col.find_one({"user_id": user_id})
-    
     if not user_data or user_data.get("data") != hoje:
-        # Se é um novo dia ou novo usuário, reseta para 1
-        users_col.update_one(
-            {"user_id": user_id},
-            {"$set": {"data": hoje, "contagem": 1}},
-            upsert=True
-        )
+        users_col.update_one({"user_id": user_id}, {"$set": {"data": hoje, "contagem": 1}}, upsert=True)
         return 1
     else:
-        # Incrementa a contagem do dia
         nova_contagem = user_data["contagem"] + 1
         users_col.update_one({"user_id": user_id}, {"$set": {"contagem": nova_contagem}})
         return nova_contagem
@@ -69,19 +61,26 @@ def criar_txt(servico, conteudo):
     buf.name = f"{servico.upper()}_HIT.txt"
     return buf
 
-# --- FILTRO DE PRIVADO ---
-
-@bot.message_handler(func=lambda m: m.chat.type == 'private' and m.from_user.id != OWNER_ID)
-def restringir_privado(message):
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🛒 COMPRAR ACESSO VIP", url=VENDAS_LINK))
-    bot.reply_to(message, "❌ *Acesso Negado!*\n\nEu respondo apenas em grupos autorizados. Para comprar seu acesso VIP 30 dias e usar no privado, chame o dono.", parse_mode='Markdown', reply_markup=kb)
+# --- VERIFICAÇÃO DE PERMISSÃO ---
+def can_use_bot(message):
+    # Se for no grupo, qualquer um usa
+    if message.chat.type in ['group', 'supergroup']:
+        return True
+    # Se for no privado, só o Thomas (Dono) usa
+    if message.chat.type == 'private' and message.from_user.id == OWNER_ID:
+        return True
+    return False
 
 # --- COMANDOS ---
 
-@bot.message_handler(commands=['bot'])
+@bot.message_handler(commands=['start', 'bot'])
 def send_menu(message):
-    # Responde em qualquer grupo ou para o dono no privado
+    if not can_use_bot(message):
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("💎 COMPRAR ACESSO VIP", url=VENDAS_LINK))
+        bot.reply_to(message, "❌ *Acesso Negado!*\n\nEu respondo apenas em grupos. Para comprar seu acesso VIP e usar no privado, chame o dono.", parse_mode='Markdown', reply_markup=kb)
+        return
+
     estoque = ""
     for s in ALL_SERVICES:
         qtd = db[s].count_documents({})
@@ -89,7 +88,7 @@ def send_menu(message):
     
     txt = (f"👋 Olá {message.from_user.first_name}!\n"
            f"🆔 Seu ID: `{message.from_user.id}`\n\n"
-           f"📊 *ESTOQUE THOMAS CHECKER:* \n{estoque}\n"
+           f"📊 *ESTOQUE ATUAL:* \n{estoque}\n"
            f"👑 *By:* {CREDITOS}")
     
     kb = types.InlineKeyboardMarkup()
@@ -98,6 +97,8 @@ def send_menu(message):
 
 @bot.message_handler(func=lambda m: m.text and m.text.startswith('/'))
 def handle_gerar(message):
+    if not can_use_bot(message): return
+
     cmd = message.text.split('@')[0].lower().replace("/", "")
     if cmd not in ALL_SERVICES: return
 
@@ -110,7 +111,7 @@ def handle_gerar(message):
         dados = res[0]['dados']
         u_name = message.from_user.first_name
         u_id = message.from_user.id
-        count = get_daily_count(u_id) # Pega contagem do dia
+        count = get_daily_count(u_id)
         
         kb = types.InlineKeyboardMarkup()
         kb.row(types.InlineKeyboardButton("🗑️ APAGAR", callback_data=f"del_{u_id}"),
@@ -120,33 +121,21 @@ def handle_gerar(message):
                   f"🆔 *ID:* `{u_id}`\n"
                   f"🎫 *Geradas hoje:* `{count}`\n\n")
 
-        # 1. Netflix
         if cmd == 'netflix':
             link = converter_nftoken(dados)
             msg = f"✅ *NETFLIX GERADA*\n\n{header}🔗 [CLIQUE AQUI PARA LOGAR]({link})\n\n🚀 {CREDITOS}"
             bot.send_message(message.chat.id, msg, parse_mode='Markdown', reply_markup=kb)
-
-        # 2. Arquivos (Prime, Youtube, Canva)
         elif cmd in FILES_SERVICES:
             arquivo = criar_txt(cmd, dados)
-            cap = f"✅ {cmd.upper()} GERADA!\n\n{header}🚀 {CREDITOS}"
-            bot.send_document(message.chat.id, arquivo, caption=cap, parse_mode='Markdown', reply_markup=kb)
-
-        # 3. IPTV (Bloco de código)
+            bot.send_document(message.chat.id, arquivo, caption=f"✅ {cmd.upper()} GERADA!\n\n{header}🚀 {CREDITOS}", parse_mode='Markdown', reply_markup=kb)
         elif cmd == 'iptv':
-            msg = f"✅ *IPTV GERADA*\n\n{header}```\n{dados}\n```\n🚀 {CREDITOS}"
-            bot.send_message(message.chat.id, msg, parse_mode='Markdown', reply_markup=kb)
-
-        # 4. Outros
+            bot.send_message(message.chat.id, f"✅ *IPTV GERADA*\n\n{header}```\n{dados}\n```\n🚀 {CREDITOS}", parse_mode='Markdown', reply_markup=kb)
         else:
-            final = f"✅ *{cmd.upper()} GERADA*\n\n{header}`{dados}`\n\n🚀 {CREDITOS}"
-            bot.send_message(message.chat.id, final, parse_mode='Markdown', reply_markup=kb)
+            bot.send_message(message.chat.id, f"✅ *{cmd.upper()} GERADA*\n\n{header}`{dados}`\n\n🚀 {CREDITOS}", parse_mode='Markdown', reply_markup=kb)
 
-        # Limpa o comando do usuário no grupo
         if message.chat.type != 'private':
             try: bot.delete_message(message.chat.id, message.message_id)
             except: pass
-
     except Exception as e:
         print(f"Erro: {e}")
 
@@ -171,7 +160,7 @@ def handle_upload(message):
             docs = [{"dados": l.strip()} for l in content.splitlines() if len(l.strip()) > 5]
         if docs:
             db[serv].insert_many(docs)
-            bot.reply_to(message, f"🚀 Sucesso! {len(docs)} contas em {serv.upper()}!")
+            bot.reply_to(message, f"🚀 Adicionadas {len(docs)} contas em {serv.upper()}!")
 
 @bot.message_handler(func=lambda m: m.text and m.text.startswith("/Limpa_"))
 def clear_category(message):
@@ -188,7 +177,7 @@ app = Flask(__name__)
 def home(): return "OK", 200
 
 if __name__ == "__main__":
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
     bot.remove_webhook()
-    print("🚀 Thomas Tracker V8 Online!")
+    print("🚀 Thomas Tracker V8.1 Online!")
     bot.infinity_polling(skip_pending=True)
