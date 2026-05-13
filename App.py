@@ -11,12 +11,10 @@ from pymongo import MongoClient
 from telebot import types
 
 # --- CONFIGURAÇÕES ---
-# TOKEN ATUALIZADO 
 TOKEN = "8479454342:AAFt6WIPhGG47RgoVkr31SBIFHmZFlvHwaU"
 MONGO_URI = "mongodb+srv://Botuser:BotRick2025@cluster0.uk43shk.mongodb.net/?appName=Cluster0"
 
-OWNER_ID = 1031830691 
-ALLOWED_GROUPS = [-1003429027149, -1003961419582, -1003802687191]
+OWNER_ID = 1031830691 # Thomas
 VENDAS_LINK = "https://t.me/ThomasObscuro"
 CREDITOS = "@ThomasObscuro"
 
@@ -25,6 +23,7 @@ bot = telebot.TeleBot(TOKEN, threaded=True)
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=30000)
 db = client['streaming_db']
 stats_col = db['usuarios_stats']
+grupos_col = db['grupos_ativos'] # Nova coleção para rastrear grupos
 
 # Listas
 STREAMING = ['crunchyroll', 'disney', 'max', 'paramount', 'apple', 'globoplay', 'clarotv', 'vivoplay', 'plex', 'viki', 'vix', 'dazn', 'duolingo']
@@ -32,6 +31,15 @@ FILES_SERVICES = ['prime', 'youtube', 'canva']
 ALL_SERVICES = STREAMING + FILES_SERVICES + ['netflix', 'iptv']
 
 # --- FUNÇÕES DE APOIO ---
+
+def registrar_grupo(message):
+    """Registra o grupo no banco de dados se for novo"""
+    if message.chat.type in ['group', 'supergroup']:
+        grupos_col.update_one(
+            {"_id": message.chat.id},
+            {"$set": {"nome": message.chat.title, "ultima_atividade": datetime.now()}},
+            upsert=True
+        )
 
 def get_daily_count(user_id):
     hoje = datetime.now().strftime("%Y-%m-%d")
@@ -52,7 +60,21 @@ def converter_nftoken(bruto):
         return f"https://netflix.com/?nftoken={t}"
     except: return bruto
 
-# --- GESTÃO (SÓ DONO - PRIORIDADE MÁXIMA) ---
+# --- GESTÃO THOMAS (SÓ DONO) ---
+
+@bot.message_handler(commands=['grupos'])
+def listar_grupos(message):
+    if message.from_user.id != OWNER_ID: return
+    grupos = grupos_col.find().sort("ultima_atividade", -1)
+    
+    txt = "📂 *GRUPOS ONDE ESTOU ATIVO:*\n\n"
+    count = 0
+    for g in grupos:
+        count += 1
+        txt += f"{count}ª ▪️ *{g['nome']}*\nID: `{g['_id']}`\n\n"
+    
+    if count == 0: txt = "❌ Ainda não fui adicionado a nenhum grupo."
+    bot.reply_to(message, txt, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.from_user.id == OWNER_ID and m.text and m.text.lower().startswith("/limpa_"))
 def handle_limpeza(message):
@@ -60,11 +82,8 @@ def handle_limpeza(message):
         servico = message.text.lower().split("_")[1]
         if servico in ALL_SERVICES:
             db[servico].delete_many({})
-            bot.reply_to(message, f"🗑️ *Thomas, estoque de {servico.upper()} zerado!*", parse_mode='Markdown')
-        else:
-            bot.reply_to(message, f"❌ Serviço `{servico}` não listado.")
-    except:
-        bot.reply_to(message, "❌ Use: `/Limpa_servico`")
+            bot.reply_to(message, f"🗑️ *Estoque de {servico.upper()} zerado!*")
+    except: pass
 
 @bot.message_handler(content_types=['document'])
 def handle_upload(message):
@@ -78,11 +97,9 @@ def handle_upload(message):
             docs = [{"dados": l.strip()} for l in content.splitlines() if len(l.strip()) > 5]
         if docs:
             db[serv].insert_many(docs)
-            bot.reply_to(message, f"🚀 Thomas, adicionei {len(docs)} em {serv.upper()}!")
-    else:
-        bot.reply_to(message, "❌ Legenda inválida! Use o nome do serviço.")
+            bot.reply_to(message, f"🚀 Sucesso! {len(docs)} em {serv.upper()}!")
 
-# --- HANDLERS PÚBLICOS ---
+# --- HANDLERS PÚBLICOS (GRUPOS) ---
 
 @bot.message_handler(commands=['start', 'bot'])
 def handle_menu(message):
@@ -90,10 +107,10 @@ def handle_menu(message):
     if message.chat.type == 'private' and message.from_user.id != OWNER_ID:
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🛒 COMPRAR ACESSO VIP", url=VENDAS_LINK))
-        bot.reply_to(message, "❌ *Acesso Negado!*\nPara usar o bot e gerar no privado, compre seu acesso VIP com o dono.", parse_mode='Markdown', reply_markup=kb)
+        bot.reply_to(message, "❌ *Acesso Negado!*\n\nEu respondo apenas em grupos oficiais. Para gerar no privado, compre o VIP.", parse_mode='Markdown', reply_markup=kb)
         return
 
-    # Resumo de estoque
+    registrar_grupo(message) # Rastreia o grupo
     estoque = "".join([f"🔹 /{s.capitalize()}: `{db[s].count_documents({})}`\n" for s in ALL_SERVICES])
     txt = (f"👋 Olá {message.from_user.first_name}!\n🆔 Seu ID: `{message.from_user.id}`\n\n"
            f"📊 *ESTOQUE THOMAS CHECKER:* \n{estoque}\n"
@@ -105,11 +122,13 @@ def handle_menu(message):
 
 @bot.message_handler(func=lambda m: m.text and m.text.startswith('/'))
 def handle_gerar(message):
-    # Bloqueia se não for grupo e não for dono
-    if message.chat.id not in ALLOWED_GROUPS and message.from_user.id != OWNER_ID: return
+    # Permite em qualquer grupo ou se for o Thomas no privado
+    if message.chat.type == 'private' and message.from_user.id != OWNER_ID: return
     
     cmd = message.text.split('@')[0].lower().replace("/", "")
     if cmd not in ALL_SERVICES: return
+
+    registrar_grupo(message) # Rastreia o grupo
 
     try:
         res = list(db[cmd].aggregate([{"$sample": {"size": 1}}]))
@@ -128,26 +147,17 @@ def handle_gerar(message):
                   f"🆔 *ID:* `{message.from_user.id}`\n"
                   f"🎫 *Geradas hoje:* `{count}`\n\n")
 
-        # Entrega Netflix
         if cmd == 'netflix':
-            link = converter_nftoken(dados)
-            msg = f"✅ *NETFLIX GERADA*\n\n{header}🔗 [CLIQUE AQUI PARA LOGAR]({link})\n\n🚀 {CREDITOS}"
+            msg = f"✅ *NETFLIX GERADA*\n\n{header}🔗 [CLIQUE AQUI PARA LOGAR]({converter_nftoken(dados)})\n\n🚀 {CREDITOS}"
             bot.send_message(message.chat.id, msg, parse_mode='Markdown', reply_markup=kb)
-        
-        # Entrega Prime/Youtube em TXT
         elif cmd in FILES_SERVICES:
             buf = io.BytesIO(dados.encode('utf-8')); buf.name = f"{cmd.upper()}.txt"
             bot.send_document(message.chat.id, buf, caption=f"✅ {cmd.upper()} GERADA!\n\n{header}🚀 {CREDITOS}", parse_mode='Markdown', reply_markup=kb)
-        
-        # Entrega IPTV em bloco
         elif cmd == 'iptv':
             bot.send_message(message.chat.id, f"✅ *IPTV GERADA*\n\n{header}```\n{dados}\n```\n🚀 {CREDITOS}", parse_mode='Markdown', reply_markup=kb)
-        
-        # Entrega Streaming Padrão
         else:
             bot.send_message(message.chat.id, f"✅ *{cmd.upper()} GERADA*\n\n{header}`{dados}`\n\n🚀 {CREDITOS}", parse_mode='Markdown', reply_markup=kb)
 
-        # Apaga o comando no grupo
         if message.chat.type != 'private':
             try: bot.delete_message(message.chat.id, message.message_id)
             except: pass
@@ -167,5 +177,5 @@ def home(): return "OK", 200
 if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
     bot.remove_webhook()
-    print("🚀 Bot V9.1 Oficial Thomas Online!")
+    print("🚀 Bot V10 Tracker Global - Online!")
     bot.infinity_polling(skip_pending=True)
